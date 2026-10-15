@@ -10,9 +10,9 @@ function deferred() {
 
 function fixture(options = {}) {
   const values = options.values || new Map();
-  const calls = [], handlers = new Set(), docHandlers = new Map();
+  const calls = [], handlers = new Set(), docHandlers = new Map(), windowHandlers = new Map();
   let now = 1000, account = 42;
-  const win = { parent: {}, addEventListener() {} };
+  const win = { parent: {}, innerWidth: 390, innerHeight: 844, addEventListener(name, callback) { windowHandlers.set(name, callback); } };
   const env = {
     window: win,
     location: { search: `?vk_app_id=${VK_APP_ID}&vk_platform=desktop_web&vk_user_id=999` },
@@ -34,12 +34,13 @@ function fixture(options = {}) {
       return { result: true };
     },
   };
-  const platform = createVKPlatform({ env, loadBridge: async () => bridge, now: () => now, saveDebounce: 120000, requestTimeout: 1000 });
+  const platform = createVKPlatform({ env, loadBridge: options.loadBridge || (async () => bridge), now: () => now, saveDebounce: 120000, requestTimeout: options.requestTimeout ?? 1000 });
   return {
     platform, bridge, calls, values, env,
     advance(milliseconds) { now += milliseconds; },
     account(id) { account = id; },
     emit(type, data) { for (const handler of handlers) handler({ detail: { type, data } }); },
+    resize(height, width = win.innerWidth) { win.innerWidth = width; win.innerHeight = height; windowHandlers.get('resize')?.(); },
     count(method) { return calls.filter(call => call.method === method).length; },
   };
 }
@@ -72,20 +73,24 @@ test('SDK identity overrides launch ID, and bottom banner stays requested across
   assert.equal(f.platform.bannerHeight, 48);
   assert.equal(f.count('VKWebAppShowBannerAd'), 1);
   assert.equal(f.calls.find(call => call.method === 'VKWebAppShowBannerAd').params.can_close, false);
+  assert.equal(f.calls.find(call => call.method === 'VKWebAppShowBannerAd').params.layout_type, 'resize');
   f.emit('VKWebAppBannerAdUpdated', { result: true, banner_height: 64, layout_type: 'overlay' });
   assert.equal(f.platform.bannerHeight, 64);
   f.emit('VKWebAppBannerAdUpdated', { result: true, banner_height: 64, layout_type: 'resize' });
+  assert.equal(f.platform.bannerHeight, 64, 'requested resize cannot remove protection before the WebView shrinks');
+  f.resize(780);
   assert.equal(f.platform.bannerHeight, 0);
   f.emit('VKWebAppViewHide');
   f.emit('VKWebAppViewRestore');
   await tick(); await tick();
   assert.equal(f.count('VKWebAppShowBannerAd'), 2);
-  assert.deepEqual(heights, [0, 48, 64, 0, 48]);
+  assert.deepEqual(heights, [0, 96, 48, 64, 0, 48]);
 });
 
 test('unavailable banner leaves no fictitious advertising placeholder', async () => {
-  const f = fixture({ override: method => method === 'VKWebAppShowBannerAd' ? Promise.reject(new Error('No fill')) : undefined });
+  const f = fixture({ override: method => method === 'VKWebAppShowBannerAd' ? { result: false } : undefined });
   assert.equal((await f.platform.init()).isVK, true);
+  await tick();
   assert.equal(f.platform.bannerHeight, 0);
 });
 
@@ -93,12 +98,124 @@ test('pending banner inventory does not hold account initialization or the cloud
   const banner = deferred();
   const f = fixture({ override: method => method === 'VKWebAppShowBannerAd' ? banner.promise : undefined });
   assert.equal((await f.platform.init()).isVK, true);
-  assert.equal(f.platform.bannerHeight, 0);
+  assert.equal(f.platform.bannerHeight, 96);
   assert.equal(await f.platform.loadSave(), null);
   assert.equal(f.platform.cloudReady, true);
   banner.resolve({ result: true, banner_height: 48, banner_location: 'bottom', layout_type: 'overlay' });
   await tick();
   assert.equal(f.platform.bannerHeight, 48);
+});
+
+test('banner space is reserved synchronously before the SDK loads', async () => {
+  const sdk = deferred();
+  const f = fixture({ loadBridge: () => sdk.promise });
+  const heights = [];
+  f.platform.onBannerChange(height => heights.push(height));
+  const loading = f.platform.init();
+  assert.equal(f.platform.bannerHeight, 96);
+  assert.equal(f.count('VKWebAppShowBannerAd'), 0);
+  sdk.resolve(f.bridge);
+  await loading; await tick();
+  assert.deepEqual(heights, [0, 96, 48]);
+});
+
+test('partial acknowledgements and malformed geometry retain the protected or measured height', async () => {
+  const f = fixture({ unsupported: ['VKWebAppCheckBannerAd'], override: method => method === 'VKWebAppShowBannerAd' ? { result: true } : undefined });
+  await f.platform.init(); await tick();
+  assert.equal(f.platform.bannerHeight, 96);
+  f.emit('VKWebAppBannerAdUpdated', { banner_height: 58, layout_type: 'overlay' });
+  assert.equal(f.platform.bannerHeight, 58);
+  for (const data of [{}, { result: true }, { banner_height: 0 }, { banner_height: 'bad' }, { banner_height: -1 }, { banner_height: null }]) {
+    f.emit('VKWebAppBannerAdUpdated', data);
+    assert.equal(f.platform.bannerHeight, 58);
+  }
+  f.emit('VKWebAppBannerAdUpdated', { banner_height: 72 });
+  assert.equal(f.platform.bannerHeight, 72, 'a height-only update preserves the overlay layout');
+});
+
+test('a partial show response can obtain geometry once through CheckBannerAd', async () => {
+  const f = fixture({ override: method => {
+    if (method === 'VKWebAppShowBannerAd') return { result: true };
+    if (method === 'VKWebAppCheckBannerAd') return { result: true, banner_height: 50, layout_type: 'overlay', banner_location: 'bottom' };
+  } });
+  await f.platform.init(); await tick();
+  assert.equal(f.platform.bannerHeight, 50);
+  assert.equal(f.count('VKWebAppCheckBannerAd'), 1);
+});
+
+test('an error is not a hide; late geometry and a slow show do not stack requests', async () => {
+  const showing = deferred();
+  const f = fixture({ requestTimeout: 5, unsupported: ['VKWebAppCheckBannerAd'], override: method => method === 'VKWebAppShowBannerAd' ? showing.promise : undefined });
+  await f.platform.init(); await tick();
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.equal(f.platform.bannerHeight, 96, 'the ordinary SDK timeout must not collapse a pending native banner');
+  f.emit('VKWebAppViewRestore'); f.emit('VKWebAppViewRestore');
+  await tick();
+  assert.equal(f.count('VKWebAppShowBannerAd'), 1);
+  f.emit('VKWebAppBannerAdUpdated', { result: true, banner_height: 60, layout_type: 'overlay' });
+  showing.resolve({ result: true, banner_height: 48, layout_type: 'overlay' });
+  await tick();
+  assert.equal(f.platform.bannerHeight, 60, 'a stale promise cannot overwrite a newer SDK update');
+  f.emit('VKWebAppViewRestore'); await tick();
+  assert.equal(f.count('VKWebAppShowBannerAd'), 2);
+});
+
+test('refresh errors, failed hide results, and partial events never collapse an existing banner', async () => {
+  let fail = false;
+  const f = fixture({ override: method => {
+    if (method === 'VKWebAppShowBannerAd' && fail) return Promise.reject(new Error('network'));
+    if (method === 'VKWebAppCheckBannerAd') return { result: false };
+  } });
+  await f.platform.init(); await tick();
+  fail = true;
+  f.emit('VKWebAppViewRestore'); await tick(); await tick();
+  f.emit('VKWebAppHideBannerAdResult', { result: false });
+  f.emit('VKWebAppShowBannerAdFailed', {});
+  assert.equal(f.platform.bannerHeight, 48);
+  f.emit('VKWebAppHideBannerAdResult', { result: true });
+  assert.equal(f.platform.bannerHeight, 0);
+});
+
+test('native resize and bottom safe-area events refine the inset without double subtracting', async () => {
+  const f = fixture({ override: method => method === 'VKWebAppShowBannerAd' ? { result: true, banner_height: 50, layout_type: 'resize' } : undefined });
+  await f.platform.init(); await tick();
+  f.emit('VKWebAppUpdateConfig', { insets: { top: 20, bottom: 34, left: 0, right: 0 } });
+  assert.equal(f.platform.bannerHeight, 84);
+  f.resize(794);
+  assert.equal(f.platform.bannerHeight, 34);
+  f.resize(760);
+  assert.equal(f.platform.bannerHeight, 0);
+  f.emit('VKWebAppBannerAdUpdated', { result: true });
+  assert.equal(f.platform.bannerHeight, 0);
+  f.emit('VKWebAppUpdateInsets', { insets: { bottom: 40 } });
+  assert.equal(f.platform.bannerHeight, 6);
+  f.emit('VKWebAppBannerAdUpdated', { result: true, layout_type: 'overlay' });
+  assert.equal(f.platform.bannerHeight, 90);
+  f.emit('VKWebAppBannerAdClosedByUser', {});
+  assert.equal(f.platform.bannerHeight, 0);
+});
+
+test('explicit unsupported clients and failed initialization release the provisional inset', async () => {
+  const f = fixture({ unsupported: ['VKWebAppShowBannerAd'] });
+  await f.platform.init(); await tick();
+  assert.equal(f.platform.bannerHeight, 0);
+  assert.equal(f.count('VKWebAppShowBannerAd'), 0);
+  const bad = fixture({ override: method => method === 'VKWebAppInit' ? { result: false } : undefined });
+  assert.equal((await bad.platform.init()).isVK, false);
+  assert.equal(bad.platform.bannerHeight, 0);
+});
+
+test('a stale availability check cannot resurrect a closed banner', async () => {
+  const check = deferred();
+  const f = fixture({ override: method => {
+    if (method === 'VKWebAppShowBannerAd') return { result: true };
+    if (method === 'VKWebAppCheckBannerAd') return check.promise;
+  } });
+  await f.platform.init(); await tick();
+  f.emit('VKWebAppBannerAdClosedByUser', {});
+  check.resolve({ result: true, banner_height: 48, layout_type: 'overlay' });
+  await tick();
+  assert.equal(f.platform.bannerHeight, 0);
 });
 
 test('initial cloud load gates writes, including a queued local snapshot during that read', async () => {

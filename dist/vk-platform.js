@@ -4,6 +4,9 @@ const STORAGE_CHUNK = 2800;
 const MAX_SAVE_BYTES = 512 * 1024;
 const MAX_CHUNKS = Math.ceil(MAX_SAVE_BYTES * 4 / 3 / STORAGE_CHUNK) + 1;
 const AD_INTERVAL = 90_000;
+// Compact native banners can appear before their Bridge response. Keep controls
+// clear during that interval, including clients that silently fall back to overlay.
+const BANNER_FALLBACK_HEIGHT = 96;
 export const VK_APP_ID = 54824611;
 
 function validJSON(text) {
@@ -57,6 +60,9 @@ export function createVKPlatform(options = {}) {
   let cloudReady = false, storageSupported = false, accountChanged = false;
   let committedSlot = 'b', pendingSave = null, lastSaved = null;
   let completedRounds = 0, lastAdAt = clock(), adBoundary = false;
+  let bannerReserved = false, bannerVisible = false, bannerSize = BANNER_FALLBACK_HEIGHT;
+  let bannerLayout = 'resize', bannerLocation = 'bottom', bannerRevision = 0, bannerEpoch = 0;
+  let safeBottom = 0, bannerViewport = null, bannerCheckTask;
 
   function notify(kind, value) {
     for (const callback of listeners[kind]) {
@@ -92,24 +98,111 @@ export function createVKPlatform(options = {}) {
     try { return typeof bridge.supportsAsync === 'function' && Boolean(await bounded(bridge.supportsAsync(method))); }
     catch { return false; }
   }
-  function updateBanner(data = {}, hidden = false) {
-    // Overlay banners cover the webview. Resize banners already reduce its size.
-    const height = !hidden && data.result !== false && data.layout_type !== 'resize' && data.banner_location !== 'top'
-      ? Math.max(0, Math.min(240, Number(data.banner_height) || 0)) : 0;
+  function viewport() {
+    const width = Number(env.window?.innerWidth), height = Number(env.window?.innerHeight);
+    return width > 0 && height > 0 ? { width, height } : null;
+  }
+  function renderBannerInset() {
+    let height = bannerReserved && bannerLocation === 'bottom' ? bannerSize + safeBottom : 0;
+    const current = viewport();
+    if (height && bannerLayout === 'resize' && current && bannerViewport) {
+      // Do not trust the requested layout alone: some clients answer before
+      // resizing, while older clients still overlay. Remove only space the native
+      // WebView has actually lost, so resize + CSS never subtract twice.
+      if (Math.abs(current.width - bannerViewport.width) < 2) {
+        height = Math.max(0, height - Math.max(0, bannerViewport.height - current.height));
+      }
+    }
+    height = Math.ceil(height);
     if (height !== bannerHeight) { bannerHeight = height; notify('banner', height); }
+  }
+  function reserveBanner() {
+    if (!bannerReserved) {
+      bannerReserved = true;
+      bannerSize = BANNER_FALLBACK_HEIGHT;
+      bannerLayout = 'resize';
+      bannerLocation = 'bottom';
+      bannerViewport = viewport();
+    }
+    renderBannerInset();
+  }
+  function clearBanner() {
+    bannerReserved = false;
+    bannerVisible = false;
+    bannerEpoch++;
+    renderBannerInset();
+  }
+  function updateBanner(data = {}, source = 'update') {
+    if (!data || typeof data !== 'object') return;
+    bannerRevision++;
+    // A failed refresh/availability check does not hide a previous native ad.
+    // Only a definitive no-ad result on first show, an update, or a close does.
+    if (data.result === false) {
+      if (source === 'update' || (source === 'show' && !bannerVisible)) clearBanner();
+      return;
+    }
+    if (data.result === true) {
+      bannerReserved = true;
+      if (source !== 'check') bannerVisible = true;
+    }
+    if (!bannerReserved) return;
+    if (data.layout_type === 'resize' || data.layout_type === 'overlay') bannerLayout = data.layout_type;
+    if (data.banner_location === 'top' || data.banner_location === 'bottom') bannerLocation = data.banner_location;
+    const height = Number(data.banner_height);
+    // Empty/zero/invalid fields are common in partial SDK acknowledgements; they
+    // must never erase the measured height or the initial protected area.
+    if (Number.isFinite(height) && height > 0) bannerSize = Math.min(1024, height);
+    renderBannerInset();
+  }
+  function updateInsets(data = {}) {
+    const bottom = data?.insets?.bottom;
+    if (typeof bottom === 'number' && Number.isFinite(bottom) && bottom >= 0) {
+      safeBottom = Math.min(240, bottom);
+      renderBannerInset();
+    }
+  }
+  function checkBanner(epoch) {
+    if (bannerCheckTask) return bannerCheckTask;
+    const revision = bannerRevision;
+    bannerCheckTask = (async () => {
+      if (!await supports('VKWebAppCheckBannerAd')) return;
+      try {
+        const data = await send('VKWebAppCheckBannerAd');
+        // CheckBannerAd reports availability, not a hide operation. Use positive
+        // geometry only, and never let an older check undo a newer update/close.
+        if (epoch === bannerEpoch && revision === bannerRevision && data?.result === true) updateBanner(data, 'check');
+      } catch { /* The protected inset survives a transient SDK/network error. */ }
+    })().finally(() => { bannerCheckTask = null; });
+    return bannerCheckTask;
   }
   function ensureBanner() {
     if (!isVK || bannerTask) return bannerTask || Promise.resolve(false);
+    reserveBanner();
+    const epoch = bannerEpoch;
     bannerTask = (async () => {
-      if (!await supports('VKWebAppShowBannerAd')) return false;
+      let supported;
+      try { supported = typeof bridge.supportsAsync === 'function' ? await bounded(bridge.supportsAsync('VKWebAppShowBannerAd')) : null; }
+      catch { supported = null; }
+      if (supported === false) {
+        if (!bannerVisible && epoch === bannerEpoch) clearBanner();
+        return false;
+      }
+      const revision = bannerRevision;
       try {
-        const data = await send('VKWebAppShowBannerAd', {
-          banner_location: 'bottom', banner_align: 'center', layout_type: 'overlay',
+        // Deliberately keep this single background request alive until the SDK
+        // settles. A slow native ad may still appear after the usual timeout;
+        // dropping its inset or issuing another show would recreate the race.
+        const data = await bridge.send('VKWebAppShowBannerAd', {
+          banner_location: 'bottom', banner_align: 'center', layout_type: 'resize',
           height_type: 'compact', orientation: 'horizontal', can_close: false,
         });
-        updateBanner(data);
-        return data.result === true;
-      } catch { updateBanner({}, true); return false; }
+        if (epoch === bannerEpoch && revision === bannerRevision) updateBanner(data, 'show');
+        if (epoch === bannerEpoch && data?.result !== false && !(Number(data?.banner_height) > 0)) void checkBanner(epoch);
+        return data?.result === true;
+      } catch {
+        if (epoch === bannerEpoch) void checkBanner(epoch);
+        return false;
+      }
     })().finally(() => { bannerTask = null; });
     return bannerTask;
   }
@@ -138,8 +231,10 @@ export function createVKPlatform(options = {}) {
     const { type, data = {} } = event?.detail || {};
     if (type === 'VKWebAppViewHide') { pause('client'); void flushSave(); }
     if (type === 'VKWebAppViewRestore') void restored();
-    if (type === 'VKWebAppBannerAdUpdated' || type === 'VKWebAppShowBannerAdResult') updateBanner(data);
-    if (type === 'VKWebAppBannerAdClosedByUser' || type === 'VKWebAppHideBannerAdResult') updateBanner({}, true);
+    if (type === 'VKWebAppBannerAdUpdated') updateBanner(data);
+    if (type === 'VKWebAppShowBannerAdResult') updateBanner(data, 'show');
+    if (type === 'VKWebAppBannerAdClosedByUser' || (type === 'VKWebAppHideBannerAdResult' && data.result === true)) clearBanner();
+    if (type === 'VKWebAppUpdateConfig' || type === 'VKWebAppGetConfigResult' || type === 'VKWebAppUpdateInsets') updateInsets(data);
   }
   function status() { return { isVK, userId, bannerHeight }; }
 
@@ -152,24 +247,38 @@ export function createVKPlatform(options = {}) {
       });
       env.window?.addEventListener?.('pagehide', () => { void flushSave(); });
       if (!vkCandidate(env, options.appId ?? VK_APP_ID)) return status();
+      // This runs synchronously before loading/initializing Bridge, not after an
+      // ad has already been put over the bottom navigation by the native client.
+      reserveBanner();
+      env.window?.addEventListener?.('resize', renderBannerInset);
       try {
         bridge = await loadBridge();
         bridge.subscribe(bridgeEvent);
         const initialized = await send('VKWebAppInit');
-        if (initialized?.result === false) return status();
+        if (initialized?.result === false) { clearBanner(); return status(); }
         // Launch parameters are hints, never an account identity or authentication.
         const user = await send('VKWebAppGetUserInfo');
-        if (!Number.isSafeInteger(user?.id) || user.id <= 0) return status();
+        if (!Number.isSafeInteger(user?.id) || user.id <= 0) { clearBanner(); return status(); }
         userId = user.id;
         isVK = true;
         lastAdAt = clock();
+        // Config events normally arrive during init; ask once as well for clients
+        // that expose iOS safe-area insets only through the explicit method.
+        void (async () => {
+          if (await supports('VKWebAppGetConfig')) {
+            try { updateInsets(await send('VKWebAppGetConfig')); } catch { /* Keep the last known safe area. */ }
+          }
+        })();
         storageSupported = (await supports('VKWebAppStorageGet')) && (await supports('VKWebAppStorageSet'));
         // Native swipe-back would otherwise steal horizontal puzzle gestures.
         if (await supports('VKWebAppDisableSwipeBack')) void send('VKWebAppDisableSwipeBack').catch(() => {});
         // Banner availability must not hold the menu or account save behind an ad request.
-        // The UI receives its actual inset through onBannerChange when the client responds.
+        // The UI already has a protected inset; geometry events refine it later.
         void ensureBanner();
-      } catch { /* A normal web launch or unavailable VK must remain playable. */ }
+      } catch {
+        // No banner was requested before VK initialization completed.
+        if (!isVK) clearBanner();
+      }
       return status();
     })();
     return initialization;

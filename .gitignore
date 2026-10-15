@@ -1,5 +1,6 @@
 node_modules/
 tmp/
 artifacts/
+preview-materials/
 *.log
 .DS_Store

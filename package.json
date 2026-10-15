@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
-    "test": "node tests/levels.test.mjs && node --test tests/renderer.test.mjs tests/vk-platform.test.mjs tests/storage.test.mjs",
+    "test": "node tests/levels.test.mjs && node --test tests/renderer.test.mjs tests/vk-platform.test.mjs tests/storage.test.mjs tests/audio.test.mjs",
     "check": "node --check dist/app.js && node --check dist/renderer.js && node --check dist/levels.js"
   }
 }
