@@ -1,0 +1,8 @@
+КУБОХОД — original project assets
+
+All raster backgrounds, textures, skin previews, and app icons in this folder are original procedural artwork created for this project with scripts/create-assets.py.
+No downloaded photographs, stock illustrations, external icon sets, or remote fonts are used.
+You may use, modify, and distribute these project assets together with the game or separately.
+The interface uses the system sans-serif font installed on the player's device.
+Audio effects and optional music are synthesized locally using Web Audio.
+UI icons and stars under ui/ were generated for this project with OpenAI's built-in ImageGen. The production prompt is recorded in ui/provenance.json. Shop previews use the game's own mesh and materials. All icons are raster assets; no SVG or icon font is required.

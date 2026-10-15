@@ -1,0 +1,55 @@
+{
+  "generator": "OpenAI built-in image_gen",
+  "original": "source-atlas.png",
+  "prompt": "Production game UI sprite atlas, four equal columns and three equal rows,\ntransparent alpha. Premium minimalist console puzzle style: ivory porcelain,\nrounded ceramic bevels, soft blue-grey shadows, warm gold accents, clean readable\nsilhouettes. No text, grid, background plates or logos. Row 1: pause bars,\nclockwise restart arrow, left return undo arrow, gold lightbulb. Row 2: four\nlevel tiles with one gold tile, open white shop box with gold cube, white rules\nbook with gold cube, white settings gear. Row 3: white back chevron, golden play\ntriangle, polished gold five-point star, matching muted blue-grey inset star.\nCentered separate icons, generous padding, mild depth, upper-left lighting.",
+  "icons": {
+    "pause": [
+      197,
+      224
+    ],
+    "restart": [
+      209,
+      224
+    ],
+    "undo": [
+      224,
+      209
+    ],
+    "hint": [
+      151,
+      224
+    ],
+    "levels": [
+      224,
+      224
+    ],
+    "shop": [
+      224,
+      202
+    ],
+    "rules": [
+      224,
+      176
+    ],
+    "settings": [
+      216,
+      224
+    ],
+    "back": [
+      151,
+      224
+    ],
+    "play": [
+      188,
+      224
+    ],
+    "star": [
+      224,
+      216
+    ],
+    "star-empty": [
+      224,
+      213
+    ]
+  }
+}

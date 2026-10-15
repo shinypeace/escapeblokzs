@@ -1,0 +1,10 @@
+{
+  "name": "@vkontakte/vk-bridge",
+  "version": "3.0.2",
+  "repository": "https://github.com/VKCOM/vk-bridge",
+  "source": "https://registry.npmjs.org/@vkontakte/vk-bridge/-/vk-bridge-3.0.2.tgz",
+  "npmIntegrity": "sha512-MTp+nl0/jH4Sa2TXDyxNfy9VkhOhRQR1oQ4yhvthVDA4aWUa26npns7bRgfTuR3xDVGFiqW7zAwLnwcv3mL+dA==",
+  "license": "MIT",
+  "modifications": "Renamed index.js and its source map; updated only sourceMappingURL to the local filename.",
+  "vendoredJavaScriptSHA256": "a61ceee81374dfd138e04e65e12b0357054999c3e178adc2c02eda289fd59419"
+}
