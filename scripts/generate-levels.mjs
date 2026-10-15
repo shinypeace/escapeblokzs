@@ -1,8 +1,9 @@
 /** Reproducible campaign authoring. Run: node scripts/generate-levels.mjs */
 import fs from 'node:fs';
-import { occupied, move, isWin, solve, DIRECTIONS } from '../dist/levels.js';
+import { LEVELS, occupied, move, isWin, solve, DIRECTIONS } from '../dist/levels.js';
 
-let seed = 0x4b55424f;
+// Published levels 1–120 stay immutable; new chapters have their own seed.
+let seed = 0x4b554332;
 const random = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
 const integer = (a, b) => a + Math.floor(random() * (b - a + 1));
 const shuffled = a => a.map(v => ({ v, r: random() })).sort((a, b) => a.r - b.r).map(x => x.v);
@@ -17,6 +18,10 @@ const NAMES = [
   ['Первый контакт','Нажми и иди','Зелёный свет','Связанные берега','Пуск','Временный проход','Найди кнопку','Обратная связь','Разомкнутый круг','Мост к цели','На расстоянии','Правильный сигнал','Включённый маршрут','Сначала сюда','Связь установлена','Цепочка','Дальний контакт','Мягкий щелчок','Смена состояния','Все мосты открыты'],
   ['Два сигнала','По порядку','Вторая линия','Связанные пути','Переключение','Разные берега','Двойной обход','Сначала мост','Короткое замыкание','Верная цепь','Согласованный шаг','Встречные пути','Нужный момент','Две стороны','Световой узел','Пара контактов','Новая связь','Общий маршрут','Полная цепь','Мастер мостов'],
   ['Собрать всё','Хрупкая связь','Точный порядок','Свет и стекло','Точка опоры','Несколько шагов вперёд','Запомни маршрут','Двойная осторожность','Красивый обход','Всё связано','По тонкой линии','Сложить картину','Последовательность','Без лишних шагов','Дальний берег','Один верный путь','Большой поворот','Почти дома','Финальный маршрут','Домой'],
+  ['Новая хрупкость','Опора на бок','Ломаная линия','Лёгкая дуга','Зеркало льда','Прозрачный узел','Осторожный возврат','Тонкая лестница','Стеклянный поворот','Несущий край','Ледяная шахта','Точная посадка','Грань за гранью','Кружево','Хрустальная петля','Лёгкий лабиринт','Согнуть маршрут','Хрупкий лабиринт','Без нажима','Равновесие найдено'],
+  ['Сигнал назад','Замкни цепь','Ещё один контакт','Мостовой разворот','Обходной сигнал','Перезагрузка пути','Пульс','Вернуть зелёный','Контактный узел','Дальний выключатель','Три касания','Обратная полярность','По кругу','Петля обратной связи','Временная пауза','Сначала обратно','Туда и назад','Живой контур','Снова на связи','Цепь замкнулась'],
+  ['Переплетённые пути','Хрупкий пульс','Стеклянный сигнал','Два света','Узкая связь','Баланс контуров','Прозрачный обход','Точный контакт','Переход по грани','Поворот цепи','Двойная грань','Световой лабиринт','Схема маршрута','Хрустальный замок','Связанные петли','Ступени света','Сквозь стекло','Точка переключения','Сплетение','Идеальная связь'],
+  ['Выше облаков','Полный оборот','Высокое напряжение','Тонкое решение','Дальний разворот','Новый горизонт','Звёздная петля','Чистый расчёт','Полный контроль','Последний контур','Невидимая нить','Хрупкий зенит','Собранный маршрут','Точная орбита','Длинная история','Мастер равновесия','Все пути ведут','Перед вершиной','Высший пилотаж','Вершина'],
 ];
 
 function component(level, start) {
@@ -126,15 +131,33 @@ function addFragile(level, count) {
   const states = trace(level, path);
   const standing = new Set(states.filter(s => s.o === 0).map(s => key([s.x, s.y])));
   const used = new Set(states.flatMap(s => occupied(s).map(key)));
-  const special = new Set([...(level.switches || []).map(b => key(b.at)), ...(level.bridges || []).map(b => key(b.at))]);
+  const special = new Set([...(level.switches || []).map(b => key(b.at)), ...(level.bridges || []).map(b => key(b.at)), ...(level.fragile || []).map(key)]);
   const choices = shuffled(level.tiles.filter(p => used.has(key(p)) && !standing.has(key(p)) && !special.has(key(p))));
   if (!choices.length) return null;
   // Prefer glass that would otherwise allow an upright shortcut or dead end.
   const reachable = component({ ...level, switches: [], bridges: [] }, level.start).queue;
   const canStand = new Set(reachable.filter(s => s.o === 0).map(s => key([s.x, s.y])));
   choices.sort((a, b) => Number(canStand.has(key(b))) - Number(canStand.has(key(a))));
-  const fragile = choices.slice(0, Math.min(count, choices.length));
+  const existing = level.fragile || [];
+  const fragile = [...existing, ...choices.slice(0, Math.max(0, count - existing.length))];
   return { ...level, fragile };
+}
+
+/** At least one glass cell must change the shortest route. Merely tinting
+ * cells the block already crosses while lying adds no new planning problem. */
+function addAdvancedFragile(level, count, maximum) {
+  const path = solve(level);
+  const states = trace(level, path);
+  const protectedCells = new Set([key([level.start.x, level.start.y]), key(level.goal), ...(level.switches || []).map(b => key(b.at)), ...(level.bridges || []).map(b => key(b.at))]);
+  const choices = shuffled(states.filter(s => s.o === 0).map(s => [s.x, s.y]).filter(p => !protectedCells.has(key(p))));
+  for (const at of choices) {
+    const candidate = { ...level, fragile: [at] };
+    const alternative = solve(candidate);
+    if (!alternative || alternative.length < path.length + 2 || alternative.length > maximum) continue;
+    if (!trace(candidate, alternative).some(state => occupied(state).some(p => same(p, at)))) continue;
+    return addFragile(candidate, count);
+  }
+  return null;
 }
 
 function addBridges(level, count) {
@@ -197,50 +220,87 @@ function fromPath(directions) {
   return normalize({ tiles: [...used.values()], start: full.start, goal: [state.x, state.y] });
 }
 
-const short = { U: 'up', D: 'down', L: 'left', R: 'right' };
-const authored = ['DDDD', 'RRDD', 'DDRRDD', 'RRDLLD', 'DRRURR', 'RRDDLLDD', 'DDRRURRDDD', 'RRDLLDDRRD'];
-const levels = [];
-const seen = new Set();
-for (let i = 0; i < authored.length; i++) {
-  const level = fromPath([...authored[i]].map(d => short[d]));
-  const solution = solve(level);
-  if (!solution || seen.has(fingerprint(level))) throw new Error(`Authored level ${i + 1} invalid`);
-  levels.push({ id: i + 1, name: NAMES[0][i], chapter: 0, ...level, par: solution.length, solution });
-  seen.add(fingerprint(level));
+/** Force state management: the route must activate one circuit at least three
+ * times. A second button can close a bridge until the player finds a return. */
+function canFinishWithoutClosingBridge(level) {
+  const queue = [{ ...level.start, mask: 0 }];
+  const seen = new Set([skey(queue[0])]);
+  for (let i = 0; i < queue.length; i++) {
+    const state = queue[i];
+    if (isWin(level, state)) return true;
+    for (const direction of DIRECTIONS) {
+      const next = move(level, state, direction);
+      if (!next || (next.mask & state.mask) !== state.mask || seen.has(skey(next))) continue;
+      seen.add(skey(next));
+      queue.push(next);
+    }
+  }
+  return false;
 }
 
+function allButtonsUsed(level, states) {
+  return (level.switches || []).every(button => states.some(state => occupied(state).some(p => same(p, button.at))));
+}
+
+function addReturnSignal(level) {
+  const protectedCells = new Set([key([level.start.x, level.start.y]), key(level.goal), ...(level.bridges || []).map(b => key(b.at)), ...(level.switches || []).map(b => key(b.at))]);
+  for (const at of shuffled(level.tiles.filter(p => !protectedCells.has(key(p)))).slice(0, 36)) {
+    for (const bit of shuffled([0, 1])) {
+      const candidate = { ...level, switches: [...level.switches, { at, bit }] };
+      const path = solve(candidate);
+      if (!path) continue;
+      const states = trace(candidate, path);
+      const activations = states.slice(1).reduce((n, state, i) => n + Number(!!((state.mask ^ states[i].mask) & (1 << bit))), 0);
+      if (activations >= 3 && path.length >= level.solutionLength + 2 && allButtonsUsed(candidate, states) && !canFinishWithoutClosingBridge(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+const levels = LEVELS.slice(0, 120);
+if (levels.length !== 120 || levels.some((level, i) => level.id !== i + 1)) throw new Error('Published campaign 1–120 is missing');
+const seen = new Set(levels.map(fingerprint));
+
 let attempts = 0;
-while (levels.length < 120) {
+while (levels.length < 200) {
   attempts++;
   const id = levels.length + 1;
   const chapter = Math.floor((id - 1) / 20);
   const position = (id - 1) % 20;
-  if (attempts > 200000) throw new Error(`Search exhausted at ${id}`);
+  if (attempts > 400000) throw new Error(`Search exhausted at ${id}`);
   let level = randomBoard();
   if (!level || seen.has(fingerprint(level))) continue;
   let solution = solve(level);
-  // Moderate ramps with a little breathing room after every fifth puzzle.
-  const minimum = [7 + Math.floor(position / 5), 11 + Math.floor(position / 4), 10 + Math.floor(position / 3), 12 + Math.floor(position / 3), 16 + Math.floor(position / 3), 19 + Math.floor(position / 2)][chapter];
-  const maximum = [12 + Math.floor(position / 4), 18 + Math.floor(position / 3), 17 + Math.floor(position / 3), 20 + Math.floor(position / 3), 25 + Math.floor(position / 3), 28 + Math.floor(position / 3)][chapter];
-  if (!solution || solution.length < minimum || solution.length > maximum) continue;
-  if (chapter === 2) level = addFragile(level, 1 + Math.floor(position / 6));
-  if (chapter === 3) level = addBridges(level, 1);
-  if (chapter === 4 || chapter === 5) level = addBridges(level, 2);
+  // Chapter 7 isolates fragile-floor mastery; later chapters combine circuits.
+  // Returns can add deliberate detours, so admit slightly shorter base boards.
+  const minimum = [23, 24, 27, 30][chapter - 6] + Math.floor(position / 5);
+  const maximum = [33, 37, 39, 44][chapter - 6] + Math.floor(position / 5);
+  if (!solution || solution.length < minimum - 5 || solution.length > maximum) continue;
+  if (chapter >= 7) level = addBridges(level, 2);
   if (!level) continue;
-  if (chapter === 5) level = addFragile(level, 2 + Math.floor(position / 7));
+  if (chapter === 7 || chapter === 9) {
+    level.solutionLength = solve(level).length;
+    level = addReturnSignal(level);
+  }
+  if (!level) continue;
+  delete level.solutionLength;
+  if (chapter !== 7) level = addAdvancedFragile(level, (chapter === 6 ? 4 : chapter === 8 ? 3 : 4) + Math.floor(position / 7), maximum);
   if (!level) continue;
   solution = solve(level);
   if (!solution || solution.length < minimum || solution.length > maximum) continue;
+  const finalStates = trace(level, solution);
+  if (!allButtonsUsed(level, finalStates)) continue;
+  if ([7, 9].includes(chapter) && ![0, 1].some(bit => finalStates.slice(1).reduce((n, state, i) => n + Number(!!((state.mask ^ finalStates[i].mask) & (1 << bit))), 0) >= 3)) continue;
   level = normalize(trimUnreachable(level));
   const signature = fingerprint(level);
   if (seen.has(signature)) continue;
   levels.push({ id, name: NAMES[chapter][position], chapter, ...level, par: solution.length, solution });
   seen.add(signature);
-  if (id % 10 === 0) console.log(`Authored ${id}/120; ${attempts} candidate boards; par ${solution.length}`);
+  if (id % 5 === 0) console.log(`Authored ${id}/200; ${attempts} candidate boards; par ${solution.length}`);
 }
 
 const target = new URL('../dist/levels.js', import.meta.url);
 const source = fs.readFileSync(target, 'utf8');
 const data = levels.map(level => JSON.stringify(level)).join(',\n');
 fs.writeFileSync(target, source.replace(/\/\/ CAMPAIGN_DATA_START[\s\S]*?\/\/ CAMPAIGN_DATA_END/, `// CAMPAIGN_DATA_START\nexport const LEVELS = [\n${data}\n];\n// CAMPAIGN_DATA_END`));
-console.log(JSON.stringify({ levels: levels.length, attempts, chapters: Array.from({ length: 6 }, (_, chapter) => { const group = levels.filter(l => l.chapter === chapter); return { chapter, min: Math.min(...group.map(l => l.par)), max: Math.max(...group.map(l => l.par)), average: +(group.reduce((n, l) => n + l.par, 0) / group.length).toFixed(1) }; }) }, null, 2));
+console.log(JSON.stringify({ levels: levels.length, attempts, chapters: Array.from({ length: 10 }, (_, chapter) => { const group = levels.filter(l => l.chapter === chapter); return { chapter, min: Math.min(...group.map(l => l.par)), max: Math.max(...group.map(l => l.par)), average: +(group.reduce((n, l) => n + l.par, 0) / group.length).toFixed(1) }; }) }, null, 2));

@@ -1,10 +1,11 @@
+import { LEVEL_COUNT, SKINS as SKIN_CATALOG, THEMES as THEME_CATALOG, RECEIPT_LIMIT, freshEconomy, utcDay } from './economy.js';
+
 // Local progress stays usable even when storage is full, disabled or damaged.
 let KEY = 'walkblock.save.v1';
 let BACKUP_KEY = `${KEY}.backup`;
 const MAX_TEXT_LENGTH = 1024 * 1024;
-const LEVEL_COUNT = 120;
-const SKINS = new Set(['classic', 'mint', 'coral', 'lilac', 'midnight', 'honey']);
-const THEMES = new Set(['dawn', 'dusk', 'lagoon', 'rose', 'night', 'sand']);
+const SKINS = new Set(SKIN_CATALOG.map(item => item.id));
+const THEMES = new Set(THEME_CATALOG.map(item => item.id));
 const SETTING_KEYS = ['sound', 'music', 'haptics', 'reducedMotion'];
 let memorySave = null;
 
@@ -14,6 +15,7 @@ export function freshSave() {
     updatedAt: 0,
     revision: 0,
     coins: 150,
+    ...freshEconomy(),
     unlocked: 1,
     results: {},
     ownedSkins: ['classic'],
@@ -74,6 +76,25 @@ function normalize(value) {
   state.coins = integer(value.coins, state.coins, 0, 9999999);
   state.unlocked = integer(value.unlocked, 1, 1, LEVEL_COUNT);
   state.hintsUsed = integer(value.hintsUsed, 0, 0, 9999999);
+  // Legacy version-1 progress receives the welcome inventory once. A depleted
+  // economy-aware save keeps zero; missing/damaged counters never refill it.
+  if (value.economyVersion !== undefined) {
+    state.hints = integer(value.hints, 0, 0, 9999999);
+    state.undos = integer(value.undos, 0, 0, 9999999);
+  }
+  state.rewardReceipts = [...new Set(Array.isArray(value.rewardReceipts)
+    ? value.rewardReceipts.filter(id => typeof id === 'string' && id.trim() && id.length <= 160)
+    : [])].slice(-RECEIPT_LIMIT);
+  if (isRecord(value.dailyReplay)) {
+    const day = value.dailyReplay.day;
+    if (typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) && utcDay(`${day}T00:00:00.000Z`) === day) {
+      state.dailyReplay = { day, levelIds: [...new Set(Array.isArray(value.dailyReplay.levelIds)
+        ? value.dailyReplay.levelIds.filter(id => Number.isInteger(id) && id >= 1 && id <= LEVEL_COUNT) : [])].slice(0, 3) };
+    }
+  }
+  if (isRecord(value.economyStats)) {
+    for (const key of Object.keys(state.economyStats)) state.economyStats[key] = integer(value.economyStats[key], 0, 0, 999999999);
+  }
   state.active = activeGame(value.active);
   state.ownedSkins = ownedList(value.ownedSkins, SKINS, 'classic');
   state.ownedThemes = ownedList(value.ownedThemes, THEMES, 'dawn');

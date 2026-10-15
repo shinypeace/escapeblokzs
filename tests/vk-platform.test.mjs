@@ -532,3 +532,203 @@ test('VK account change freezes cloud writes until a fresh app session', async (
   assert.equal(await f.platform.flushSave(), false);
   assert.equal(f.count('VKWebAppStorageSet'), 0);
 });
+
+test('rewarded video is explicit, uses reward format, and returns a unique receipt only after SDK completion', async () => {
+  const showing = deferred();
+  let held = true;
+  const f = fixture({ override: (method, params) => method === 'VKWebAppShowNativeAds' && params.ad_format === 'reward' && held ? showing.promise : undefined });
+  const events = [];
+  f.platform.onPause(reason => events.push(`pause:${reason}`));
+  f.platform.onResume(reason => events.push(`resume:${reason}`));
+  await f.platform.init();
+  await tick();
+  assert.equal(f.count('VKWebAppCheckNativeAds'), 0);
+  assert.equal(f.count('VKWebAppShowNativeAds'), 0);
+  const pending = f.platform.rewarded('hints');
+  await tick();
+  assert.equal(f.platform.isAdOpen, true);
+  assert.deepEqual(events, ['pause:reward']);
+  assert.deepEqual(f.calls.find(call => call.method === 'VKWebAppCheckNativeAds').params, { ad_format: 'reward' });
+  assert.deepEqual(f.calls.find(call => call.method === 'VKWebAppShowNativeAds').params, { ad_format: 'reward' });
+  showing.resolve({ result: true });
+  const reward = await pending;
+  assert.equal(reward.ok, true);
+  assert.match(reward.receiptId, /^reward:42:hints:/);
+  assert.ok(reward.receiptId.length <= 160);
+  assert.equal(f.platform.isAdOpen, false);
+  assert.deepEqual(events, ['pause:reward', 'resume:reward']);
+  held = false;
+  const second = await f.platform.rewarded('undos');
+  assert.equal(second.ok, true);
+  assert.match(second.receiptId, /^reward:42:undos:/);
+  assert.notEqual(second.receiptId, reward.receiptId);
+});
+
+test('ordinary browsers, unsupported methods and empty rewarded inventory return no advertising reward', async () => {
+  const outside = createVKPlatform({ env: {} });
+  assert.deepEqual(await outside.rewarded('hints'), { ok: false, reason: 'unavailable' });
+  for (const unsupported of [['VKWebAppCheckNativeAds'], ['VKWebAppShowNativeAds']]) {
+    const f = fixture({ unsupported });
+    await f.platform.init();
+    assert.deepEqual(await f.platform.rewarded('hints'), { ok: false, reason: 'unavailable' });
+    assert.equal(f.count('VKWebAppShowNativeAds'), 0);
+    assert.equal(f.platform.isAdOpen, false);
+  }
+  const empty = fixture({ override: method => method === 'VKWebAppCheckNativeAds' ? { result: false } : undefined });
+  await empty.platform.init();
+  assert.deepEqual(await empty.platform.rewarded('undos'), { ok: false, reason: 'unavailable' });
+  assert.equal(empty.count('VKWebAppShowNativeAds'), 0);
+  assert.deepEqual(await empty.platform.rewarded('unknown'), { ok: false, reason: 'unavailable' });
+});
+
+test('cancelled, rejected and malformed rewarded results never return an inventory receipt and always release the ad pause', async () => {
+  const cases = [
+    { response: { result: false }, reason: 'cancelled' },
+    { response: {}, reason: 'cancelled' },
+    { error: { error_data: { error_reason: 'User denied' } }, reason: 'cancelled' },
+    { error: new Error('Native video failed'), reason: 'unavailable' },
+  ];
+  for (const entry of cases) {
+    const f = fixture({ override: method => {
+      if (method !== 'VKWebAppShowNativeAds') return;
+      if (entry.error) throw entry.error;
+      return entry.response;
+    } });
+    const events = [];
+    f.platform.onPause(reason => events.push(`pause:${reason}`));
+    f.platform.onResume(reason => events.push(`resume:${reason}`));
+    await f.platform.init();
+    const result = await f.platform.rewarded('hints');
+    assert.deepEqual(result, { ok: false, reason: entry.reason });
+    assert.equal('receiptId' in result, false);
+    assert.equal(f.platform.isAdOpen, false);
+    assert.deepEqual(events, ['pause:reward', 'resume:reward']);
+  }
+});
+
+test('pending rewarded availability owns the shared boundary and double taps cannot stack rewarded or interstitial ads', async () => {
+  const available = deferred();
+  const f = fixture({ override: (method, params) => method === 'VKWebAppCheckNativeAds' && params.ad_format === 'reward' ? available.promise : undefined });
+  await f.platform.init();
+  f.advance(90000);
+  await f.platform.afterRound('win');
+  await f.platform.afterRound('loss');
+  const reward = f.platform.rewarded('undos');
+  await tick();
+  assert.deepEqual(await f.platform.rewarded('hints'), { ok: false, reason: 'busy' });
+  assert.equal(await f.platform.afterRound('loss'), false);
+  assert.equal(f.count('VKWebAppCheckNativeAds'), 1);
+  assert.equal(f.count('VKWebAppShowNativeAds'), 0);
+  available.resolve({ result: true });
+  assert.equal((await reward).ok, true);
+  assert.equal(f.count('VKWebAppShowNativeAds'), 1);
+});
+
+test('a rewarded native video keeps the pause beyond ordinary request timeouts and rejects parallel calls', async () => {
+  const showing = deferred();
+  const f = fixture({ requestTimeout: 10, override: method => method === 'VKWebAppShowNativeAds' ? showing.promise : undefined });
+  await f.platform.init();
+  const reward = f.platform.rewarded('hints');
+  await tick();
+  await delay(25);
+  assert.equal(f.platform.isAdOpen, true);
+  assert.deepEqual(await f.platform.rewarded('undos'), { ok: false, reason: 'busy' });
+  assert.equal(await f.platform.afterRound('win'), false);
+  assert.equal(f.count('VKWebAppShowNativeAds'), 1);
+  showing.resolve({ result: true });
+  assert.equal((await reward).ok, true);
+  assert.equal(f.platform.isAdOpen, false);
+});
+
+test('an interstitial availability request excludes rewarded video until its boundary finishes', async () => {
+  const available = deferred();
+  const f = fixture({ override: (method, params) => method === 'VKWebAppCheckNativeAds' && params.ad_format === 'interstitial' ? available.promise : undefined });
+  await f.platform.init();
+  f.advance(90000);
+  await f.platform.afterRound('loss');
+  await f.platform.afterRound('win');
+  const boundary = f.platform.afterRound('loss');
+  await tick();
+  assert.deepEqual(await f.platform.rewarded('hints'), { ok: false, reason: 'busy' });
+  available.resolve({ result: true });
+  assert.equal(await boundary, true);
+  assert.equal((await f.platform.rewarded('hints')).ok, true);
+  assert.deepEqual(f.calls.filter(call => call.method === 'VKWebAppShowNativeAds').map(call => call.params.ad_format), ['interstitial', 'reward']);
+});
+
+test('rewarded video restarts the interstitial cooldown, including when the video is cancelled', async () => {
+  for (const result of [true, false]) {
+    const f = fixture({ override: (method, params) => method === 'VKWebAppShowNativeAds' && params.ad_format === 'reward' ? { result } : undefined });
+    await f.platform.init();
+    f.advance(90000);
+    await f.platform.afterRound('win');
+    await f.platform.afterRound('loss');
+    await f.platform.rewarded('hints');
+    f.advance(89999);
+    for (let attempt = 0; attempt < 3; attempt++) await f.platform.afterRound('loss');
+    assert.equal(f.calls.filter(call => call.method === 'VKWebAppShowNativeAds' && call.params.ad_format === 'interstitial').length, 0);
+    f.advance(1);
+    assert.equal(await f.platform.afterRound('win'), true);
+  }
+});
+
+test('a hidden client or a client hidden during availability never opens a rewarded video', async () => {
+  const available = deferred();
+  const f = fixture({ override: method => method === 'VKWebAppCheckNativeAds' ? available.promise : undefined });
+  await f.platform.init();
+  f.visibility(true);
+  assert.deepEqual(await f.platform.rewarded('hints'), { ok: false, reason: 'busy' });
+  f.visibility(false);
+  const pending = f.platform.rewarded('hints');
+  await tick();
+  f.emit('VKWebAppViewHide');
+  available.resolve({ result: true });
+  assert.deepEqual(await pending, { ok: false, reason: 'busy' });
+  assert.equal(f.count('VKWebAppShowNativeAds'), 0);
+});
+
+test('rewarded success verifies the SDK account again and refuses to award a different account', async () => {
+  const showing = deferred();
+  const f = fixture({ override: method => method === 'VKWebAppShowNativeAds' ? showing.promise : undefined });
+  await f.platform.loadSave();
+  const accounts = [];
+  f.platform.onAccountChange(id => accounts.push(id));
+  const pending = f.platform.rewarded('hints');
+  await tick();
+  f.account(100);
+  showing.resolve({ result: true });
+  assert.deepEqual(await pending, { ok: false, reason: 'account' });
+  assert.deepEqual(accounts, [100]);
+  assert.equal(f.platform.cloudReady, false);
+  assert.equal(f.platform.isAdOpen, false);
+  assert.deepEqual(await f.platform.rewarded('undos'), { ok: false, reason: 'account' });
+  assert.equal(f.count('VKWebAppShowNativeAds'), 1);
+});
+
+test('account mismatch before rewarded availability prevents the video from opening', async () => {
+  const f = fixture();
+  await f.platform.init();
+  f.account(100);
+  assert.deepEqual(await f.platform.rewarded('undos'), { ok: false, reason: 'account' });
+  assert.equal(f.count('VKWebAppCheckNativeAds'), 0);
+  assert.equal(f.count('VKWebAppShowNativeAds'), 0);
+});
+
+test('rewarded video suspends banner polling while open and resumes the existing banner flow on close', async () => {
+  const showing = deferred();
+  const f = fixture({ bannerPollInterval: 15, override: method => method === 'VKWebAppShowNativeAds' ? showing.promise : undefined });
+  await f.platform.init();
+  await waitUntil(() => f.count('VKWebAppCheckBannerAd') >= 1, 'initial banner state was not checked');
+  const pending = f.platform.rewarded('hints');
+  await tick();
+  const checks = f.count('VKWebAppCheckBannerAd');
+  const bannerShows = f.count('VKWebAppShowBannerAd');
+  await delay(45);
+  assert.equal(f.count('VKWebAppCheckBannerAd'), checks);
+  assert.equal(f.platform.bannerHeight, 48);
+  showing.resolve({ result: true });
+  assert.equal((await pending).ok, true);
+  await waitUntil(() => f.count('VKWebAppCheckBannerAd') > checks, 'banner polling did not resume after reward');
+  assert.equal(f.count('VKWebAppShowBannerAd'), bannerShows + 1);
+  assert.equal(f.platform.bannerHeight, 48);
+});

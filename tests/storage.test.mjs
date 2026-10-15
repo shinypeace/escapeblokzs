@@ -196,16 +196,83 @@ test('valid completed levels determine unlocks and unsupported purchases are not
     ownedThemes: ['dawn', 'night', 'unlisted'], theme: 'night',
     results: {
       1: { completed: true, stars: 3, moves: 8, bestMoves: 8 },
-      120: { completed: true, stars: 5, moves: 50, bestMoves: 45 },
-      121: { completed: true, stars: 3, moves: 1 },
+      200: { completed: true, stars: 5, moves: 50, bestMoves: 45 },
+      201: { completed: true, stars: 3, moves: 1 },
       2: { completed: false, stars: 3, moves: 1 },
     },
   })));
   assert.equal(state.coins, 0);
-  assert.equal(state.unlocked, 120);
-  assert.deepEqual(Object.keys(state.results), ['1', '120']);
-  assert.equal(state.results[120].stars, 3);
+  assert.equal(state.unlocked, 200);
+  assert.deepEqual(Object.keys(state.results), ['1', '200']);
+  assert.equal(state.results[200].stars, 3);
   assert.deepEqual(state.ownedSkins, ['classic', 'mint']);
   assert.equal(state.skin, 'classic');
   assert.equal(state.theme, 'night');
+});
+
+test('legacy version-one saves receive the five-plus-five welcome inventory only once without changing purchases or coins', () => {
+  const legacy = snapshot({ coins: 432, unlocked: 120, ownedSkins: ['classic', 'mint', 'honey'], skin: 'honey', ownedThemes: ['dawn', 'sand'], theme: 'sand' });
+  for (const key of ['economyVersion', 'hints', 'undos', 'rewardReceipts', 'dailyReplay', 'economyStats']) delete legacy[key];
+  values.set('walkblock.save.v1', JSON.stringify(legacy));
+  let migrated = loadSave();
+  assert.equal(migrated.version, 1);
+  assert.equal(migrated.economyVersion, 1);
+  assert.equal(migrated.coins, 432);
+  assert.equal(migrated.hints, 5);
+  assert.equal(migrated.undos, 5);
+  assert.deepEqual(migrated.ownedSkins, legacy.ownedSkins);
+  assert.equal(migrated.theme, 'sand');
+  migrated.hints = 0;
+  migrated.undos = 0;
+  saveSave(migrated);
+  setSaveScope();
+  migrated = loadSave();
+  assert.equal(migrated.hints, 0);
+  assert.equal(migrated.undos, 0);
+  assert.equal(parseSave(exportSave(migrated)).hints, 0);
+  assert.equal(chooseSave(freshSave(), { ...migrated, updatedAt: 100 }).undos, 0);
+});
+
+test('new cosmetics, inventory, rewarded receipts and daily allowance survive account-scoped cloud roundtrips', () => {
+  setSaveScope(42);
+  const state = saveSave(snapshot({
+    ownedSkins: ['classic', 'glass', 'gold', 'glitter', 'obsidian'], skin: 'glitter',
+    ownedThemes: ['dawn', 'aurora', 'nebula', 'ember'], theme: 'ember',
+    hints: 8, undos: 0,
+    rewardReceipts: ['vk-reward-1', 'vk-reward-2'],
+    dailyReplay: { day: '2026-10-16', levelIds: [1, 18] },
+    economyStats: { spentBoosts: 120, spentCosmetics: 2000, earnedCampaign: 80, earnedDaily: 80, rewardedHints: 3, rewardedUndos: 0 },
+    active: { levelId: 200, state: { x: 1, y: 2, o: 1, mask: 3 }, history: [], moves: 0 },
+  }));
+  assert.deepEqual(parseSave(exportSave(state)), state);
+  setSaveScope(84);
+  assert.equal(loadSave().hints, 5);
+  assert.deepEqual(loadSave().rewardReceipts, []);
+  setSaveScope(42);
+  assert.deepEqual(loadSave(), state);
+});
+
+test('malformed economy values cannot refill an economy-aware save or create unlimited daily rewards', () => {
+  const state = parseSave(JSON.stringify(snapshot({
+    hints: -20, undos: '5',
+    rewardReceipts: ['valid', 'valid', '', 5, 'x'.repeat(161)],
+    dailyReplay: { day: '2026-10-16', levelIds: [1, 1, 200, 201, -1, 18, 19, '2'] },
+    economyStats: { spentBoosts: -1, earnedDaily: '500', rewardedHints: 4.9, bad: 100 },
+  })));
+  assert.equal(state.hints, 0);
+  assert.equal(state.undos, 0);
+  assert.deepEqual(state.rewardReceipts, ['valid']);
+  assert.deepEqual(state.dailyReplay, { day: '2026-10-16', levelIds: [1, 200, 18] });
+  assert.equal(state.economyStats.spentBoosts, 0);
+  assert.equal(state.economyStats.earnedDaily, 0);
+  assert.equal(state.economyStats.rewardedHints, 4);
+  assert.equal(state.economyStats.bad, undefined);
+  const noCounters = snapshot();
+  delete noCounters.hints;
+  delete noCounters.undos;
+  assert.equal(parseSave(JSON.stringify(noCounters)).hints, 0);
+  assert.equal(parseSave(JSON.stringify(noCounters)).undos, 0);
+  for (const day of ['2026-02-30', 'not-a-date', '2026-1-1']) {
+    assert.deepEqual(parseSave(JSON.stringify(snapshot({ dailyReplay: { day, levelIds: [1, 2, 3] } }))).dailyReplay, { day: '', levelIds: [] });
+  }
 });

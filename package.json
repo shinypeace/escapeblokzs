@@ -1,13 +1,13 @@
 {
   "name": "kubohod",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "type": "module",
-  "description": "A portrait puzzle adventure with 120 levels",
+  "description": "A portrait puzzle adventure with 200 levels and secret collectibles",
   "scripts": {
     "start": "node server.mjs",
     "dev": "node server.mjs",
-    "test": "node tests/levels.test.mjs && node --test tests/renderer.test.mjs tests/vk-platform.test.mjs tests/storage.test.mjs tests/audio.test.mjs",
-    "check": "node --check dist/app.js && node --check dist/renderer.js && node --check dist/levels.js"
+    "test": "node tests/levels.test.mjs && node --test tests/renderer.test.mjs tests/vk-platform.test.mjs tests/storage.test.mjs tests/economy.test.mjs tests/audio.test.mjs",
+    "check": "node --check dist/app.js && node --check dist/renderer.js && node --check dist/levels.js && node --check dist/economy.js && node --check dist/storage.js && node --check dist/audio.js && node --check dist/vk-platform.js"
   }
 }

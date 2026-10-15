@@ -1,0 +1,79 @@
+{
+  "generator": "OpenAI built-in image_gen",
+  "date": "2026-10-16",
+  "processing": "Lanczos resize only, 768x1152 WebP quality 86",
+  "assets": {
+    "aurora": {
+      "file": "aurora.webp",
+      "prompt": "Portrait premium minimalist puzzle-game backdrop: teal aurora borealis ribbons at edges, quiet deep teal center, smooth cinematic color, no objects, no text.",
+      "size": [
+        768,
+        1152
+      ],
+      "bytes": 24564,
+      "top": "#0b5960",
+      "bottom": "#082b40"
+    },
+    "nebula": {
+      "file": "nebula.webp",
+      "prompt": "Portrait premium minimalist puzzle-game backdrop: deep indigo, violet and cobalt nebular wisps at edges, sparse distant stars, quiet center, no objects, no text.",
+      "size": [
+        768,
+        1152
+      ],
+      "bytes": 58620,
+      "top": "#292265",
+      "bottom": "#090d30"
+    },
+    "ember": {
+      "file": "ember.webp",
+      "prompt": "Portrait premium minimalist puzzle-game backdrop: warm smoked burgundy, amber mist at corners, muted terracotta-plum center, subtle sparks, no flames, objects or text.",
+      "size": [
+        768,
+        1152
+      ],
+      "bytes": 16678,
+      "top": "#713d3a",
+      "bottom": "#302133"
+    },
+    "lilac": {
+      "file": "lilac.png",
+      "prompt": "White marble with broad lavender-gray mineral veins, natural polished stone, seamless orthographic albedo, no directional lighting, objects or text.",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 108156,
+      "processing": "Lanczos resize only"
+    },
+    "midnight": {
+      "file": "midnight.png",
+      "prompt": "Rich deep-indigo galaxy with violet and electric-blue nebula and bright tiny stars, clearly legible at small game-block size, edge-to-edge albedo texture, no planets, objects or text.",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 139494,
+      "processing": "Lanczos resize only"
+    },
+    "honey": {
+      "file": "honey.png",
+      "prompt": "Natural walnut wood grain, chestnut and golden-brown long flowing growth rings and dark pores, subtle knot, vertical grain, even-lit orthographic albedo texture, no objects or text.",
+      "size": [
+        256,
+        256
+      ],
+      "bytes": 95906,
+      "processing": "Lanczos resize only"
+    },
+    "mystery": {
+      "file": "ui/mystery.webp",
+      "prompt": "Isolated midnight-cobalt ceramic secret treasure capsule with gold band and clasp, premium isometric 3D product render, transparent background, no text or revealed item.",
+      "size": [
+        400,
+        267
+      ],
+      "bytes": 30086
+    }
+  }
+}

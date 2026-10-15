@@ -19,9 +19,9 @@ try {
   await page.goto(base);
   const previews = await page.evaluate(async () => {
     const { Renderer } = await import('./renderer.js');
-    const skins = ['classic','mint','coral','lilac','midnight','honey'];
+    const skins = ['classic','mint','coral','lilac','midnight','honey','glass','gold','glitter','obsidian'];
     const textures = {};
-    await Promise.all(skins.filter(id=>id!=='classic').map(async id=>{
+    await Promise.all(['mint','coral','lilac','midnight','honey'].map(async id=>{
       const image = new Image();
       image.src = `./assets/${id}.png`;
       await image.decode();
@@ -38,6 +38,7 @@ try {
       ctx.fillStyle='rgba(12,26,51,.18)';ctx.beginPath();ctx.ellipse(0,0,67,35,0,0,Math.PI*2);ctx.fill();ctx.restore();
       const renderer = Object.create(Renderer.prototype);
       renderer.canvas = canvas;renderer.ctx = ctx;renderer.skin=skin;renderer.textures=textures;
+      renderer.materialTime=0;renderer.reducedMotion=true;
       renderer.camera = {scale:96,x:179.36,y:178.48};
       renderer.drawBlock({x:0,y:0,o:0});
       result[skin] = canvas.toDataURL('image/png').split(',')[1];

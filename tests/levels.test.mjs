@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
+import { createHash } from 'node:crypto';
 import { LEVELS, occupied, move, isWin, solve } from '../dist/levels.js';
 
 const started = performance.now();
@@ -67,10 +68,11 @@ function canonicalGeometry(level) {
   return variants.sort()[0];
 }
 
-assert.equal(LEVELS.length, 120);
+assert.equal(LEVELS.length, 200);
+assert.equal(createHash('sha256').update(JSON.stringify(LEVELS.slice(0, 120))).digest('hex'), 'f483b6bbdd5d0363aa7f05f14c56c1a797c110a9b573ad2c398173e1cf4d464c', 'published first 120 levels, ids, pars and solutions are unchanged');
 const silhouettes = new Set();
 const names = new Set();
-const stats = Array.from({ length: 6 }, () => ({ levels: 0, moves: 0, min: Infinity, max: 0 }));
+const stats = Array.from({ length: 10 }, () => ({ levels: 0, moves: 0, min: Infinity, max: 0 }));
 for (const [index, level] of LEVELS.entries()) {
   const label = `Level ${index + 1} (${level.name})`;
   assert.equal(level.id, index + 1, `${label}: sequential id`);
@@ -117,12 +119,17 @@ for (const [index, level] of LEVELS.entries()) {
   let state = { ...level.start, mask: 0 };
   const touchedGlass = new Set();
   const crossedBridges = new Set();
+  const touchedButtons = new Set();
+  const activations = [0, 0];
   for (const direction of level.solution) {
-    state = move(level, state, direction);
+    const previous = state;
+    state = move(level, previous, direction);
     assert.ok(state, `${label}: stored path is physically valid`);
+    for (let bit = 0; bit < 2; bit++) activations[bit] += Number(!!((previous.mask ^ state.mask) & (1 << bit)));
     for (const p of occupied(state)) {
       if ((level.fragile || []).some(q => key(q) === key(p))) touchedGlass.add(key(p));
       if ((level.bridges || []).some(b => key(b.at) === key(p))) crossedBridges.add(key(p));
+      if ((level.switches || []).some(b => key(b.at) === key(p))) touchedButtons.add(key(p));
     }
   }
   assert.ok(isWin(level, state), `${label}: stored path ends upright in the hole`);
@@ -134,18 +141,39 @@ for (const [index, level] of LEVELS.entries()) {
   assert.ok(solve(level, midpoint), `${label}: contextual hint works midway through the level`);
 
   if (index < 40) assert.ok(!level.fragile && !level.switches && !level.bridges, `${label}: basic mechanics only`);
-  if (level.chapter === 2 || level.chapter === 5) {
+  if ([2, 5, 6, 8, 9].includes(level.chapter)) {
     assert.ok(level.fragile.length > 0, `${label}: glass chapter includes glass`);
     assert.equal(touchedGlass.size, level.fragile.length, `${label}: every glass tile participates in the designed route`);
+    if (level.id > 120) assert.ok(solve({ ...level, fragile: [] }).length <= level.par - 2, `${label}: glass changes the route and forbids an upright shortcut`);
   }
-  if (level.chapter >= 3) {
+  if ([3, 4, 5, 7, 8, 9].includes(level.chapter)) {
     const circuits = level.chapter === 3 ? 1 : 2;
-    assert.equal(level.switches.length, circuits, `${label}: expected number of circuits`);
+    const switches = [7, 9].includes(level.chapter) ? 3 : circuits;
+    assert.equal(level.switches.length, switches, `${label}: expected number of buttons`);
+    assert.equal(new Set(level.switches.map(button => button.bit)).size, circuits, `${label}: independent circuits have distinct marks`);
     assert.equal(level.bridges.length, circuits);
     assert.equal(crossedBridges.size, circuits, `${label}: every bridge must be crossed`);
     assert.equal(solve({ ...level, switches: [] }), null, `${label}: buttons are required to finish`);
     for (const bridge of level.bridges) {
       assert.equal(solve({ ...level, tiles: level.tiles.filter(p => key(p) !== key(bridge.at)) }), null, `${label}: each bridge is essential`);
+    }
+    if (level.id > 120) assert.equal(touchedButtons.size, switches, `${label}: all buttons participate in the optimal route`);
+  }
+  if ([7, 9].includes(level.chapter)) {
+    assert.ok(activations.some(count => count >= 3), `${label}: optimal route requires returning to a circuit`);
+    // An independent search forbids turning an enabled circuit off. Failure
+    // proves a return is required to win, not merely used by the stored route.
+    const queue = [{ ...level.start, mask: 0 }];
+    const seen = new Set([`${level.start.x},${level.start.y},0,0`]);
+    for (let i = 0; i < queue.length; i++) {
+      const current = queue[i];
+      assert.equal(isWin(level, current), false, `${label}: a circuit must be closed again before winning`);
+      for (const direction of ['up', 'down', 'left', 'right']) {
+        const next = move(level, current, direction);
+        if (!next || (next.mask & current.mask) !== current.mask) continue;
+        const signature = `${next.x},${next.y},${next.o},${next.mask || 0}`;
+        if (!seen.has(signature)) { seen.add(signature); queue.push(next); }
+      }
     }
   }
   const stat = stats[level.chapter];
@@ -153,5 +181,5 @@ for (const [index, level] of LEVELS.entries()) {
 }
 assert.ok(LEVELS[0].par >= 3 && LEVELS[0].par <= 6, 'first lesson is short');
 for (const stat of stats) assert.equal(stat.levels, 20);
-console.log(`PASS: 120 distinct campaign boards, optimal solutions, hints, glass, toggles and mandatory bridges (${Math.round(performance.now() - started)} ms).`);
+console.log(`PASS: 200 distinct campaign boards, optimal solutions, hints, glass, toggles, return signals and mandatory bridges (${Math.round(performance.now() - started)} ms).`);
 console.table(stats.map((s, i) => ({ chapter: i + 1, levels: s.levels, minimum: s.min, maximum: s.max, average: +(s.moves / s.levels).toFixed(1) })));

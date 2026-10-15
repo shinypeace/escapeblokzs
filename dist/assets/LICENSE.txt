@@ -1,8 +1,33 @@
-КУБОХОД — original project assets
+КУБОХОД — asset provenance
 
-All raster backgrounds, textures, skin previews, and app icons in this folder are original procedural artwork created for this project with scripts/create-assets.py.
-No downloaded photographs, stock illustrations, external icon sets, or remote fonts are used.
-You may use, modify, and distribute these project assets together with the game or separately.
-The interface uses the system sans-serif font installed on the player's device.
-Audio effects and optional music are synthesized locally using Web Audio.
-UI icons and stars under ui/ were generated for this project with OpenAI's built-in ImageGen. The production prompt is recorded in ui/provenance.json. Shop previews use the game's own mesh and materials. All icons are raster assets; no SVG or icon font is required.
+PROJECT ARTWORK
+The original backgrounds, basic surface textures, app icon and earlier skin
+previews were created for this project with scripts/create-assets.py.
+The interface icons and stars under ui/ were created with OpenAI's built-in
+ImageGen; their production prompt is recorded in ui/provenance.json.
+The aurora, nebula and ember backgrounds, marble/galaxy/walnut textures and
+secret-shop capsule were created with the same built-in ImageGen tool.
+Their prompts, filenames and export details are in cosmetic-provenance.json.
+Skin thumbnails are rendered from the game's actual mesh and materials by
+scripts/render-shop-previews.mjs. Glass, gold, glitter and obsidian surfaces
+use native Canvas shading and the same depth clipping as the other blocks.
+All shipped icons and backgrounds are raster assets; no SVG or icon font
+is required. The interface uses the system sans-serif font.
+
+SOUND EFFECTS
+Recorded effects in sfx/ are project edits of Kenney's Impact Sounds,
+Interface Sounds and Music Jingles packs, released under Creative Commons
+Zero (CC0 1.0). Their original license notices are retained as:
+  sfx/LICENSE-impact.txt
+  sfx/LICENSE-interface.txt
+  sfx/LICENSE-jingles.txt
+Exact source files, source links and processing are listed in sfx/manifest.json.
+Source: https://kenney.nl/
+CC0 text: https://creativecommons.org/publicdomain/zero/1.0/
+
+MUSIC
+music.mp3 was supplied by the project owner and included at their request.
+No independent CC0 or public-domain status is asserted for this recording.
+
+The CC0 notices apply to the credited Kenney sound packs. They do not apply
+to the supplied music, generated/project artwork, or the game source code.

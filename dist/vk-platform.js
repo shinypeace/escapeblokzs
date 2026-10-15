@@ -58,6 +58,7 @@ export function createVKPlatform(options = {}) {
   let cloudReady = false, storageSupported = false, accountChanged = false;
   let committedSlot = 'b', pendingSave = null, lastSaved = null;
   let completedRounds = 0, lastAdAt = clock(), adBoundary = false;
+  let rewardSequence = 0;
   let bannerVisible = false, bannerSize = 0, bannerLayout = 'overlay', bannerLocation = 'bottom';
   let bannerRevision = 0, bannerEpoch = 0, bannerRequest = 0;
   let bannerCheckTask, bannerCheckSupport, bannerPollTimer;
@@ -380,7 +381,7 @@ export function createVKPlatform(options = {}) {
       if (!await supports('VKWebAppCheckNativeAds') || !await supports('VKWebAppShowNativeAds')) return false;
       const available = await send('VKWebAppCheckNativeAds', { ad_format: 'interstitial' });
       if (available?.result !== true || pauses.size || accountChanged) return false;
-      // This is the only fullscreen ad call site. Caller awaits it at a completed round boundary.
+      // Automatic fullscreen ads are requested only at a completed round boundary.
       isAdOpen = true;
       lastAdAt = clock();
       completedRounds = 0;
@@ -400,8 +401,59 @@ export function createVKPlatform(options = {}) {
     }
   }
 
+  function rewardReceipt(kind, account) {
+    let identifier;
+    try { identifier = (env.crypto || globalThis.crypto)?.randomUUID?.(); } catch { /* Older clients use the fallback. */ }
+    identifier ||= `${clock()}-${++rewardSequence}-${Math.random().toString(36).slice(2)}`;
+    return `reward:${account}:${kind}:${identifier}`;
+  }
+
+  // This method is called only by an explicit empty-boost button click. SDK
+  // completion confirms the video; the game owns the inventory transaction.
+  async function rewarded(kind) {
+    if (!['hints', 'undos'].includes(kind) || !isVK) return { ok: false, reason: 'unavailable' };
+    if (accountChanged) return { ok: false, reason: 'account' };
+    if (adBoundary || isAdOpen || pauses.size || env.document?.hidden) return { ok: false, reason: 'busy' };
+    adBoundary = true;
+    const account = userId;
+    let opened = false;
+    try {
+      if (!await supports('VKWebAppCheckNativeAds') || !await supports('VKWebAppShowNativeAds')) {
+        return { ok: false, reason: 'unavailable' };
+      }
+      if (!await verifyAccount()) return { ok: false, reason: accountChanged ? 'account' : 'unavailable' };
+      const available = await send('VKWebAppCheckNativeAds', { ad_format: 'reward' });
+      if (accountChanged || userId !== account) return { ok: false, reason: 'account' };
+      if (pauses.size || env.document?.hidden) return { ok: false, reason: 'busy' };
+      if (available?.result !== true) return { ok: false, reason: 'unavailable' };
+      isAdOpen = true;
+      opened = true;
+      lastAdAt = clock();
+      completedRounds = 0;
+      pause('reward');
+      void flushSave();
+      // A native video may exceed an ordinary request timeout. Keep the shared
+      // ad lock and audio pause until the SDK actually reports its completion.
+      const result = await bridge.send('VKWebAppShowNativeAds', { ad_format: 'reward' });
+      if (result?.result !== true) return { ok: false, reason: 'cancelled' };
+      if (!await verifyAccount() || userId !== account) return { ok: false, reason: 'account' };
+      return { ok: true, receiptId: rewardReceipt(kind, account) };
+    } catch (error) {
+      const reason = error?.error_data?.error_reason || error?.error_reason || error?.message || '';
+      const cancelled = /cancel|отмен|user.{0,12}(?:denied|closed|skip)/i.test(String(reason));
+      return { ok: false, reason: cancelled ? 'cancelled' : 'unavailable' };
+    } finally {
+      if (opened) {
+        isAdOpen = false;
+        resume('reward');
+        void ensureBanner();
+      }
+      adBoundary = false;
+    }
+  }
+
   return {
-    init, loadSave, queueSave, flushSave, afterRound,
+    init, loadSave, queueSave, flushSave, afterRound, rewarded,
     get isVK() { return isVK; },
     get userId() { return userId; },
     get isAdOpen() { return isAdOpen; },
