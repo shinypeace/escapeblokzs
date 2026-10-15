@@ -2,7 +2,7 @@ import { LEVELS, move, occupied, isWin, solve } from './levels.js';
 import { Renderer } from './renderer.js';
 import { loadSave, saveSave, exportSave, parseSave, chooseSave, setSaveScope } from './storage.js';
 import { audio } from './audio.js';
-import { platform } from './vk-platform.js';
+import { platform } from './vk-platform.js?v=20261016-overlay';
 
 const $=s=>document.querySelector(s), app=$('#app'), modalRoot=$('#modal-root'), renderer=new Renderer($('#scene'));
 const CHAPTERS=['Первые шаги','Обходной путь','Тонкий лёд','Связь берегов','Двойной расчёт','Большой маршрут'];
